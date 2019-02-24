@@ -1,0 +1,352 @@
+---
+title: "Bike Project?"
+author: "Group 23"
+date: "2/12/2019"
+output: 
+  pdf_document: 
+    fig_caption: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library(alr4)
+library(ALSM)
+library(knitr)
+library(onewaytests)
+library(stats)
+library(MASS)
+
+```
+\newcommand{\lin}[0]{\begin{center}\line(1,0){400}\end{center}}
+   
+    
+\tableofcontents
+
+
+
+\section{Simple Linear Models}  
+
+
+
+\subsection{Count vs. Temperature}  
+
+
+Just going to try our most basic relationship we may be interested in, the response of amount of users based on the temperature.  
+
+***
+
+```{r count-v-temp, comment = "      ", fig.show='asis'}
+
+bike<-read.table("~/Documents/stat512/Project/Bike-Sharing-Dataset/hour.csv", header=TRUE, sep=",")
+
+#summary(bike)    #this has an annoying output
+
+bike.mod<-lm(bike$cnt~bike$temp, bike)
+summary(bike.mod)
+anova(bike.mod)
+
+plot(bike$cnt~bike$temp, bike)
+abline(bike.mod)
+# we see that the LM doesn't visually seem to fit the data very well, so
+#we move on to the residual plot
+
+resid<-residuals(bike.mod)
+plot(bike$temp, resid)
+abline(h=0)
+#this is where we see an odd effect that's due to the effect known as
+#zero-weighted data commonly experienced with count data, seen here:
+hist(bike$cnt)
+
+
+#error testing for this model even though it seems fishy:
+
+bike$residuals<-residuals(bike.mod)
+bike$tempf<- factor(cut(bike$temp, 2))
+
+
+shapiro.test(bike$residuals[0:5000])  #shapiro can only handle up to 5000 entries
+qqnorm(bike$residuals)
+qqline(bike$residuals)
+
+bf.test(residuals~tempf, bike)
+
+```
+***  
+
+
+
+\subsection{Basic Transforms}
+
+
+This is a sort of play area for transforms, change t to be however you'd like to transform the Y (bike$cnt) and see the effects on the model.  
+When first presenting the issue with cnt vs temp, the prof suggested the transform    
+
+>t<-((bike$cnt-mean(bike$cnt))/var(bike$cnt))     
+  
+which didn't work for me, but again try whatever you'd like here!  Just thouht it'd be nice to have an area to just change one variable (t) for a SLR and run the whole chunk to see the response.  
+
+***  
+```{r basic-transforms, comment = "      ", fig.show='asis'}
+
+t<-(log(abs(bike$cnt-mean(bike$cnt)))^2)   # this one looked the most "normal"
+hist(t)                                    #  for cnt, of the transforms I tried
+bike.modt<-lm(t~bike$temp, bike)
+
+summary(bike.modt)
+anova(bike.modt)
+
+plot(t~bike$temp, bike)
+abline(bike.modt)
+
+#residuals
+residt<-residuals(bike.modt)
+plot(bike$temp, residt)
+abline(h=0)
+
+
+bike$residualst<-residuals(bike.modt)
+#factored temp will be the same, so used the same tempf
+#(with a randomly chosen c of 2?)
+
+shapiro.test(bike$residualst[0:5000])  #shapiro can only handle up to 5000 entries
+qqnorm(bike$residualst)
+qqline(bike$residualst)
+
+bf.test(residualst~tempf, bike)
+```
+
+***  
+In summary: I'm not sure this transformation was helpful at all! Moves the 0-heavy data to the middle, so it skews it to seem as though there is no correlation. It gives the illusion of solving the 0-heavy data by moving it to a different count value.
+
+\subsection{Multivariate Regression}    
+
+
+Now to try a multivariate combining the continuous variables we're interested in.  
+We chose Windspeed, Temperature(original), and Humidity as our combinations.  
+
+
+***  
+```{r multivariate, comment = "      ", fig.show='asis'}
+
+multivariate<-lm(bike$cnt ~ bike$wind + bike$temp + bike$hum)
+
+
+summary(multivariate)
+anova(multivariate)
+
+#plot each relationship:
+plot(bike$cnt~bike$windspeed, bike)
+abline(lm(bike$cnt~bike$windspeed))
+#something is off with this variable... maybe just 0-heavy again
+summary(lm(bike$cnt~bike$windspeed))
+
+
+
+plot(bike$cnt~bike$hum, bike)
+abline(lm(bike$cnt~bike$hum))        #this is at least better than windspeed
+summary(lm(bike$cnt~bike$hum))
+
+#plot fit:
+
+#----------------------------------------------------
+#this works, it creates an x that is the prediction
+# of the combined variables, since abline needs a
+# single slope, rather than the 3 multivariate
+# provides
+#----------------------------------------------------
+
+plot(bike$cnt ~ predict(multivariate), bike)
+abline(lm(bike$cnt ~ predict(multivariate), bike))
+summary(lm(bike$cnt ~ predict(multivariate), bike))  #these are to check
+anova(lm(bike$cnt ~ predict(multivariate), bike))    # the fit is still fine
+
+
+#plot residuals:
+resid.multi<-residuals(multivariate)
+plot(bike$windspeed + bike$temp + bike$hum, resid.multi)
+abline(h=0)
+
+
+bike$multi.residuals<-residuals(multivariate)
+bike$multi.tempf<- factor(cut((predict(multivariate)), 3))
+
+
+shapiro.test(bike$multi.residuals[0:5000])  #shapiro can only handle up to 5000 entries
+qqnorm(bike$multi.residuals)
+qqline(bike$multi.residuals)
+
+bf.test(multi.residuals~multi.tempf, bike)
+```
+
+***  
+
+\section{Optimisation of LM}
+  
+  
+\subsection{Box-Cox method}  
+
+Since I can't come up with a transform that actually helps, I'll see what the optimized transformation is and see how that goes:  
+
+
+***  
+```{r BoxCox, comment = "      ", fig.show='asis'}
+
+box = boxcox(bike$cnt~1, lambda = seq(-2,2,0.01) )
+
+cox = data.frame(box$x, box$y)
+cox2 = cox[with(cox, order(-cox$box.y)),]
+cox2[1,]
+
+lambda = cox2[1,"box.x"]
+
+cnt_box = (bike$cnt ^ lambda - 1)/lambda
+#maybe just try just cnt^lambda? Depends on what source I look at
+
+hist(cnt_box)  #way better that bike$cnt
+
+bike.mod2<-lm(cnt_box~bike$temp, bike)
+summary(bike.mod2)
+resid2<-residuals(bike.mod2)
+
+plot(bike$temp, resid2)
+abline(h=0)
+
+plot(cnt_box~bike$temp, bike)
+abline(bike.mod2)
+
+#error testing for the box-cox model
+bike$residuals<-residuals(bike.mod2)
+#uses the same tempf, it is unchanged
+
+
+shapiro.test(bike$residuals[0:5000])  #shapiro can only handle up to 5000 entries
+qqnorm(bike$residuals)
+qqline(bike$residuals)
+
+bf.test(residuals~tempf, bike)
+
+```
+
+***  
+  
+\subsection{Box-Cox with Multivariate}  
+  
+
+Just to see how that goes, if it improves our situation at all.  
+
+
+***  
+```{r Multivar-BoxCox, comment = "      ", fig.show='asis'}
+
+#lambda, and therefore cnt_box will be the same
+
+multivariate.bc<-lm(cnt_box~bike$wind + bike$temp + bike$hum, bike)
+summary(multivariate.bc)
+resid.multi.bc<-residuals(multivariate.bc)
+
+plot(bike$wind + bike$temp + bike$hum, resid.multi.bc)
+abline(h=0)
+
+plot(cnt_box~predict(multivariate.bc), bike)
+#using the same odd technique to be able to plot the regression line:
+abline(lm(cnt_box~predict(multivariate.bc), bike))
+#and the same checks on the techniquely new lm:
+summary(lm(cnt_box~predict(multivariate.bc), bike))
+anova(lm(cnt_box~predict(multivariate.bc), bike))
+
+
+bike$multi.bc.residuals<-residuals(multivariate.bc)
+bike$multi.bc.xf<-factor(cut(predict(multivariate.bc), 3))
+
+shapiro.test(bike$multi.bc.residuals[0:5000])
+qqnorm(bike$multi.bc.residuals)
+qqline(bike$multi.bc.residuals)
+
+bf.test(multi.bc.residuals~multi.bc.xf, bike)
+
+# Here's an easier way to do it? (how a friend did their boxcox transforms)
+# > boxcox(multivariate, lambda = seq(-6,6, 0.01))
+# > b<-boxcox(multivariate, lambda = seq(-6,6, 0.01))
+# > lambda<- b$x[which.max(b$y)]
+# > lambda
+# [1] 0.32
+# > bike$bcount<-(bike$cnt)^lambda
+# > bmod<-lm(bcount~bike$wind + bike$temp + bike$hum, bike)
+# > summary(bmod)
+# > plot(bmod)
+# 
+# 
+
+```
+  
+***  
+
+Reference used for boxcox transform:  
+  
+***  
+>library(MASS)  
+  # Transform Turbidity as a single vector, trying values -6 to 6 by 0.1 :   
+Box = boxcox(Turbidity ~ 1,  lambda = seq(-6,6,0.1) )    
+  # Create a data frame with the results :  
+Cox = data.frame(Box$x, Box$y)          
+  # Order the new data frame by decreasing y :  
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),]   
+  # Display the lambda with the greatest log likelihood :  
+Cox2[1,]                                   
+
+>   Box.x     Box.y    
+59  -0.2 -41.35829  
+>.  
+  # Extract that lambda :   
+lambda = Cox2[1, "Box.x"]                  
+  # Transform the original data :  
+T_box = (Turbidity ^ lambda - 1)/lambda   
+
+***  
+  
+\subsection{Trying other things}  
+  
+
+Results from the BoxCox improved the normaility of the residuals, technically did not improve the prediction of the mean of the dependant function, and increased the $R^{2}$ ever so slightly. Maybe try a box.cox.powers transformation found [here](http://math.furman.edu/~dcs/courses/math47/R/library/car/html/box.cox.powers.html), where it has this example:
+>box.cox.powers(cbind(income, education))  
+--Box-Cox Transformations to Multinormality  
+-- 
+--           Est.Power Std.Err. Wald(Power=0) Wald(Power=1)   
+-- income       0.2617   0.1014         2.580        -7.280   
+-- education    0.4242   0.4033         1.052        -1.428   
+-- 
+-- L.R. test, all powers = 0:  7.694   df = 2   p = 0.0213   
+-- L.R. test, all powers = 1:  48.8727   df = 2   p = 0    
+plot(income, education)  
+plot(box.cox(income, .26), box.cox(education, .42))  
+
+>box.cox.powers(income)  
+-- Box-Cox Transformation to Normality   
+--   
+--  Est.Power Std.Err. Wald(Power=0) Wald(Power=1)  
+--     0.1793   0.1108         1.618        -7.406  
+--   
+-- L.R. test, power = 0:  2.7103   df = 1   p = 0.0997  
+-- L.R. test, power = 1:  47.261   df = 1   p = 0   
+qq.plot(income)  
+qq.plot(income^.18)  
+
+#####wrong ):
+Apparently, the box.cox.transform is now defunct, and has been replaced with powerTransform, documentation found [here](https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/powerTransform), it looks to be the same thing.
+
+#####Needs more time to work on it if it's worth it:
+
+```{r blah, comment = "      ", fig.show='asis'}
+# summary(p1<-powerTransform(bike$cnt ~ bike$temp + bike$windspeed + bike$hum, bike))
+# 
+# coef(p1, round=TRUE)
+# summary(m1<- lm(bcPower(bike$cnt, p1$roundlam) ~ bike$temp + bike$windspeed + bike$hum, bike))
+
+
+
+
+```
+
+
